@@ -2,10 +2,6 @@ aiohttp
 websockets
 cryptography
 paramiko
+telnetlib3
 psutil
 tls-client
-selenium
-undetected-chromedriver
-beautifulsoup4
-requests
-telnetlib3
