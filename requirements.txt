@@ -1,0 +1,10 @@
+aiohttp
+websockets
+cryptography
+paramiko
+psutil
+tls-client
+selenium
+undetected-chromedriver
+beautifulsoup4
+requests
