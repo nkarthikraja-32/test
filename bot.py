@@ -380,8 +380,12 @@ class SyndicateBot:
             await asyncio.sleep(30)
 
     async def send(self, data):
-        if self.ws and self.ws.open:
+    if self.ws:
+        try:
             await self.ws.send(json.dumps(data))
+        except websockets.exceptions.ConnectionClosed:
+            logger.warning("Connection closed while sending")
+            self.ws = None
 
     async def handle_message(self, message):
         try:
