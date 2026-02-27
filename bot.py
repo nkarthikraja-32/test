@@ -375,17 +375,23 @@ class SyndicateBot:
                 await asyncio.sleep(10)
 
     async def heartbeat(self):
-        while self._running and self.ws and self.ws.open:
-            await self.send({'type': 'stats', **self.stats})
+        while self._running and self.ws:
+            try:
+                await self.send({'type': 'stats', **self.stats})
+            except websockets.exceptions.ConnectionClosed:
+                logger.warning("Connection closed during heartbeat")
+                self.ws = None
+                break
             await asyncio.sleep(30)
 
     async def send(self, data):
-    if self.ws:
-        try:
-            await self.ws.send(json.dumps(data))
-        except websockets.exceptions.ConnectionClosed:
-            logger.warning("Connection closed while sending")
-            self.ws = None
+        """Send data over WebSocket with error handling."""
+        if self.ws:
+            try:
+                await self.ws.send(json.dumps(data))
+            except websockets.exceptions.ConnectionClosed:
+                logger.warning("Connection closed while sending")
+                self.ws = None
 
     async def handle_message(self, message):
         try:
