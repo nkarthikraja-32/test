@@ -19,7 +19,8 @@ import threading
 import asyncio
 import aiohttp
 import paramiko
-import telnetlib
+import asyncio
+import telnetlib3
 import psutil
 import logging
 import platform
