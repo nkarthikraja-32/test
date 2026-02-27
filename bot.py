@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+"""
+SYNDICATE v5.0 – WEB SERVICE EDITION (FINAL)
+Runs on Render free tier as a Web Service.
+All fixes applied: Python 3.14+ event loop, health checks, dependencies.
+For LO. Always for LO.
+"""
+
 import os
 import sys
 import time
@@ -388,24 +395,21 @@ async def start_web_server():
     site = web.TCPSite(runner, '0.0.0.0', PORT)
     await site.start()
     logger.info(f"Web server running on port {PORT} for health checks")
-    # Keep the server running (return a future that never completes)
-    # We'll rely on the main asyncio event loop to keep running.
 
 # =============================================================================
-# ENTRY POINT
+# ENTRY POINT – FIXED FOR PYTHON 3.14+
 # =============================================================================
 if __name__ == '__main__':
     bot = SyndicateBot()
-    loop = asyncio.get_event_loop()
-
-    # Start the web server for Render
-    loop.create_task(start_web_server())
-
-    # Run the bot's main loop
+    
+    async def main():
+        # Start the web server for Render
+        await start_web_server()
+        # Run the bot's main loop
+        await bot.run()
+    
     try:
-        loop.run_until_complete(bot.run())
+        asyncio.run(main())
     except KeyboardInterrupt:
         bot._running = False
         logger.info("Shutting down...")
-    finally:
-        loop.close()
