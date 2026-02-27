@@ -5,3 +5,4 @@ paramiko
 telnetlib3
 psutil
 tls-client
+typing-extensions
